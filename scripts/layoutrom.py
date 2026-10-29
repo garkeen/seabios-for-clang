@@ -359,7 +359,7 @@ def outRelSections(sections, startsym, useseg=0):
         # counter relative to the section VMA; lld runs it absolute, and
         # lld is the only i386 ELF linker available on this host.)
         out += ". = 0x%x ;\n" % (loc,)
-        if section.name in ('.rodata.str1.1', '.rodata'):
+        if section.name.startswith('.rodata'):
             out += "_rodata%s = . ;\n" % (section.fileid,)
         # Use explicit input file names rather than the "*<fileid>.*"
         # filename wildcards: lld does not match that wildcard form the
@@ -674,23 +674,14 @@ def main():
     info32seg = parseObjDump(infile32seg, '32seg')
     info32flat = parseObjDump(infile32flat, '32flat')
 
-    # lld merges identically-named SHF_MERGE string sections (e.g.
-    # .rodata.str1.1) across ALL input files into a single synthesized
-    # <internal> input before the linker script ever runs, so the script
-    # cannot place them per-file the way GNU ld does.  Model that here:
-    # fold every .rodata.str1.1 into one virtual 32flat section sized to
-    # the sum of the originals (dedup by lld can only shrink it), and make
-    # all symbols/relocs that pointed at the originals point at the fold.
-    strsecs = [sec for info in (info16, info32seg, info32flat)
-               for sec in info[0] if sec.name == '.rodata.str1.1']
-    if strsecs:
-        # The 16bit/32seg scripts still place their own copies (needed for
-        # their standalone links); at the final rom.o link lld discards
-        # those copies and routes everything through the union.  Size the
-        # 32flat copy for the full union so the final layout has room.
-        flatstr = [sec for sec in info32flat[0] if sec.name == '.rodata.str1.1']
-        if flatstr:
-            flatstr[0].size = sum(sec.size for sec in strsecs)
+    # Each link keeps its own string section, and the two standalone links that
+    # bake string addresses into their code (the 16-bit `push $str` immediates
+    # and 32seg) no longer share a section name with the 32flat copy: the build
+    # renames them to .rodata.str16.1 / .rodata.str32seg.1 (see the noexec rule
+    # in build.ninja). Identical SHF_MERGE names are what lld folds into one
+    # synthesized input, so with distinct names there is nothing to fold: every
+    # link places its own copy per its own script, and the addresses the 16-bit
+    # and 32seg code carries are exactly the ones the final image has.
 
     # Read kconfig config file
     config = scanconfig(cfgfile)
